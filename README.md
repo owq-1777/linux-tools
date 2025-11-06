@@ -1,93 +1,32 @@
 linux-tools
 ===========
 
-Small ops/dev helper repository with local Docker stacks and setup scripts.
+Lean ops/dev tooling for fast workstation bootstrap and local service containers.
 
-Useful commands
----------------
-- Start all configured docker stacks from repo root (if using compose v2 and service directories):
+Docker stacks
+-------------
+- MariaDB: `docker compose -f docker/mariadb/docker-compose.yaml up -d`
+- Redis: `docker compose -f docker/redis/docker-compose.yaml up -d`
+- Logs: e.g. `docker compose -f docker/mariadb/docker-compose.yaml logs -f mariadb`
+- Stop a stack with the same compose file and `down`
 
-```bash
-cd docker/mariadb && docker compose up -d
-cd docker/redis && docker compose up -d
-```
+Script catalog
+--------------
 
-- Inspect container logs:
+All scripts sit in `scripts/`. Run them with `bash scripts/<name>.sh`. Root-oriented scripts expect `sudo -i` first.
 
-```bash
-docker compose -f docker/mariadb/docker-compose.yaml logs -f mariadb
-```
+- `install-docker-root.sh` – install Docker Engine + compose plugin system-wide
+- `setup-build-toolchain.sh` – install compilers, CMake, Ninja, Python build deps
+- `setup-system-build-deps.sh` – install general build deps and Go toolchain
+- `setup-zsh-root.sh` – install Zsh, Oh My Zsh, plugins, Powerlevel10k for root
+- `create-dev-from-root-zsh.sh` – create `dev` user, mirror root Zsh config, add docker/sudo groups
+- `setup-ssh-defaults.sh --target-user <name>` – provision ~/.ssh and generate ed25519 keypair
+- `setup-safe-rm.sh` – install safe-rm wrapper with default blacklist
+- `setup-php84-fpm.sh` – configure PHP 8.4 FPM and common extensions
+- `setup-dev-tools-user.sh` – install per-user dev tools (nvm, Node LTS, pnpm, rustup, uv)
+- `build-nginx-stable-stealth.sh` – build nginx with stealth modules (requires toolchain deps)
 
-Notes
------
-
-This repository provides convenience configs for local development. Review and adjust security-sensitive values (passwords, bind mounts, network exposure) before using in production.
-
-Scripts quick-start
--------------------
-
-Run these scripts from the repository root. Most root scripts require `sudo -i` (or running as root) and are idempotent.
-
-- scripts/root/install-docker-root.sh
-  - Purpose: install Docker Engine (CE) and compose plugin system-wide.
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/install-docker-root.sh
-  ```
-
-- scripts/root/setup-build-toolchain.sh
-  - Purpose: install compilers, C/C++ build tools, CMake, Ninja, Python build deps, etc.
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/setup-build-toolchain.sh
-  ```
-
-- scripts/root/setup-system-build-deps.sh
-  - Purpose: install basic system build deps and Go toolchain (system-wide).
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/setup-system-build-deps.sh
-  ```
-
-- scripts/root/setup-zsh-root.sh
-  - Purpose: install Zsh, Oh My Zsh, plugins and Powerlevel10k for root account.
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/setup-zsh-root.sh
-  ```
-
-- scripts/root/create-dev-from-root-zsh.sh
-  - Purpose: create a `dev` user, copy root's Zsh setup into it, add to docker & sudo groups.
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/create-dev-from-root-zsh.sh
-  ```
-
-- scripts/root/setup-ssh-defaults.sh
-  - Purpose: create/manage ~/.ssh for a target user, generate ed25519 keypair and authorized_keys.
-  - Quick run (for target user `dev`):
-
-  ```bash
-  sudo -i && bash scripts/root/setup-ssh-defaults.sh --target-user dev
-  ```
-
-- scripts/root/setup-safe-rm.sh
-  - Purpose: install `safe-rm`, write a blacklist and place an `rm` wrapper.
-  - Quick run:
-
-  ```bash
-  sudo -i && bash scripts/root/setup-safe-rm.sh
-  ```
-
-- scripts/user/setup-dev-tools-user.sh
-  - Purpose: install per-user dev tools (nvm, Node LTS, pnpm, rustup, uv etc.) into $HOME.
-  - Quick run (as the target user):
-
-  ```bash
-  bash scripts/user/setup-dev-tools-user.sh
-  ```
+Safety notes
+------------
+- Review passwords, bind mounts, and exposed ports before sharing docker configs
+- Scripts aim to be idempotent but confirm destructive steps on important hosts first

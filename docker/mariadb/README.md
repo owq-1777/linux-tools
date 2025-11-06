@@ -7,7 +7,7 @@ Quick start for MariaDB (development)
 
 2. Start the service:
 
-   cd /home/oaq/linux-tools/docker/mariadb
+   cd docker/mariadb
    docker compose up -d
 
 3. Check status and logs:
