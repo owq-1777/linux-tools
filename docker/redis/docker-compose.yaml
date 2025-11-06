@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  redis:
+    image: "${REDIS_IMAGE:-redis/redis-stack-server:7.4.0-v8}"
+    container_name: redis-stack
+    restart: unless-stopped
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"    # Redis primary port
+      - "8001:8001"    # RedisInsight / stack UI
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Minimal resources (adjust for production)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  redis_data:
+    driver: local

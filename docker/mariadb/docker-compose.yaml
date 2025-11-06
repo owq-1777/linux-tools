@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: "${MARIADB_IMAGE:-mariadb:11}"
+    container_name: mariadb
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # keep timezone here so it can be overridden from .env if needed
+      - TZ=${TZ:-UTC}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      # Optional: mount a custom config file (uncomment to enable)
+      # - ./my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    healthcheck:
+      # Uses mysqladmin inside the container; relies on MARIADB_ROOT_PASSWORD from .env
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MARIADB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: ["--character-set-server=utf8mb4","--collation-server=utf8mb4_unicode_ci"]
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mariadb_data:
