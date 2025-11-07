@@ -20,11 +20,7 @@
 
 set -euo pipefail
 
-# ---- root requirement --------------------------------------------------------
-if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Please run as root (e.g., sudo -i then bash setup-zsh-root.sh)." >&2
-  exit 1
-fi
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 ROOT_HOME="/root"

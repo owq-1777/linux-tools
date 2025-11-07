@@ -17,10 +17,7 @@
 
 set -euo pipefail
 
-if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Please run as root (e.g., sudo -i && bash setup-php84-fpm.sh)." >&2
-  exit 1
-fi
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 

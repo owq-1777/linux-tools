@@ -21,11 +21,8 @@
 
 set -euo pipefail
 
-# ---- root requirement --------------------------------------------------------
-if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Please run as root (e.g., sudo -i && bash setup-safe-rm.sh)." >&2
-  exit 1
-fi
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
+
 
 # ---- parse args (no functions) ----------------------------------------------
 EXTRA_STR=""

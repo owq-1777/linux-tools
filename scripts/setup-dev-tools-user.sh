@@ -24,6 +24,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   echo "Warning: This script is intended for a regular user, not root." >&2
 fi
 
+
 # ---- settings ----------------------------------------------------------------
 NVM_VERSION="v0.39.7"
 MARK_BEGIN="# BEGIN dev-tools PATH"
