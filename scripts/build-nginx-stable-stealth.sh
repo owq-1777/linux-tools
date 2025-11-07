@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# build-nginx-stable-stealth.sh
+# build-nginx-stable-stealth.sh  (EN)
 #
-# Build & install NGINX 1.28.0 from fixed URL, create conf.d, add php-fpm/proxy
-# samples, and apply "stealth" hardening (randomized Server header via
-# headers-more + split_clients). Fixed so that all location{} live in server{}.
+# Build & install NGINX 1.28.0 from fixed URL, create conf.d, ship DISABLED
+# examples (*.conf.example) for php-fpm and proxy-pass, and apply stealth
+# hardening (headers-more + split_clients). Uses www-data everywhere.
 # OS  : Ubuntu 22.04
 # User: root
 # -----------------------------------------------------------------------------
@@ -12,21 +12,62 @@
 set -euo pipefail
 [[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
+FORCE="${FORCE:-0}"
 
-# ====== version & URL =========================================================
 NGINX_VERSION="1.28.0"
 BASE_URL="https://nginx.org/download"
 TARBALL="nginx-${NGINX_VERSION}.tar.gz"
 TARBALL_URL="${BASE_URL}/${TARBALL}"
 
-# ====== deps ==================================================================
+echo ">>> Preflight checks (use FORCE=1 to continue despite warnings)..."
+
+# 1) Existing systemd unit?
+if systemctl list-units --type=service --all | grep -qE '^\s*nginx\.service'; then
+  state="$(systemctl is-active nginx || true)"
+  unit_path="$(systemctl cat nginx | head -n1 | sed 's/^# //')"
+  echo " - systemd unit: nginx.service (state: ${state}) -> ${unit_path}"
+  [[ "${state}" == "active" ]] && echo "   WARN: nginx is running. Consider: systemctl stop nginx"
+else
+  echo " - systemd unit: nginx.service not present (will be created)"
+fi
+
+# 2) Which nginx binary resolves now?
+if command -v nginx >/dev/null 2>&1; then
+  BIN="$(command -v nginx)"; VER="$($BIN -v 2>&1 || true)"
+  echo " - current nginx binary: ${BIN}  (${VER})"
+else
+  echo " - current nginx binary: (not found)"
+fi
+
+# 3) Any apt nginx packages?
+dpkg -l 'nginx*' 2>/dev/null | awk '/^ii/{print " - apt package: "$2" "$3}' || true
+dpkg -l 'nginx*' 2>/dev/null | grep -q '^ii' && \
+  echo "   NOTE: /etc/systemd/system overrides packaged units (your custom unit will take precedence)." # :contentReference[oaicite:1]{index=1}
+
+# 4) Ports (non-fatal)
+ss -ltn 'sport = :80'  | tail -n +2 | grep -q . && echo " - port 80 in use (non-fatal)"
+ss -ltn 'sport = :443' | tail -n +2 | grep -q . && echo " - port 443 in use (non-fatal)"
+
+# 5) Default server / modules hints
+if [[ -d /etc/nginx ]]; then
+  ds_count="$(grep -R --include='*.conf' -nE '^\s*listen\s+.*\bdefault_server\b' /etc/nginx 2>/dev/null | wc -l || true)"
+  [[ "${ds_count}" -gt 1 ]] && echo " - WARN: multiple 'default_server' listeners found (${ds_count})."
+  grep -R --include='*.conf' -n '^load_module' /etc/nginx 2>/dev/null | grep -q . && \
+    echo " - NOTE: dynamic modules must be binary-compatible with core (use --with-compat)." # :contentReference[oaicite:2]{index=2}
+fi
+
+if [[ "${FORCE}" != "1" ]]; then
+  echo ">>> Preflight done. To proceed anyway: FORCE=1 bash $(basename "$0")"
+  exit 2
+fi
+
 echo ">>> Installing build dependencies..."
 apt-get update -y
 apt-get install -y \
   build-essential git curl ca-certificates wget perl \
   libpcre2-dev zlib1g-dev libssl-dev tar xz-utils unzip
 
-# ====== download & unpack =====================================================
+# --- Download & unpack --------------------------------------------------------
 TMPDIR="$(mktemp -d)"
 echo ">>> Working in ${TMPDIR}"
 cd "${TMPDIR}"
@@ -35,12 +76,13 @@ curl -fL "${TARBALL_URL}" -o "${TARBALL}"
 tar -xzf "${TARBALL}"
 cd "nginx-${NGINX_VERSION}"
 
-# ====== runtime users/dirs ====================================================
-id -u nginx >/dev/null 2>&1 || adduser --system --no-create-home --group --shell /usr/sbin/nologin nginx
+# --- Runtime users/dirs (use www-data) ---------------------------------------
+# www-data exists on Ubuntu by default; create only if missing.
+id -u www-data >/dev/null 2>&1 || adduser --system --no-create-home --group --shell /usr/sbin/nologin www-data
 install -d -m0755 /etc/nginx /etc/nginx/conf.d /var/log/nginx /var/cache/nginx /usr/lib/nginx/modules
 
-# ====== configure & build nginx ==============================================
-# Official flags; keep --with-compat for dynamic modules later. :contentReference[oaicite:1]{index=1}
+# --- Configure & build nginx (keep --with-compat for dyn-modules) ------------
+# Official docs: configure flags; enable http_ssl/v2, stream, etc. :contentReference[oaicite:3]{index=3}
 echo ">>> Configuring..."
 ./configure \
   --prefix=/usr/local/nginx \
@@ -67,24 +109,25 @@ echo ">>> Building & installing..."
 make -j"$(nproc)"
 make install
 
-# ====== base config (ensure conf.d and includes) ==============================
-[[ -f /etc/nginx/mime.types ]]     || install -m0644 ./conf/mime.types /etc/nginx/mime.types
+# --- Base config & example sites (www-data) ----------------------------------
+[[ -f /etc/nginx/mime.types     ]] || install -m0644 ./conf/mime.types /etc/nginx/mime.types
 [[ -f /etc/nginx/fastcgi_params ]] || install -m0644 ./conf/fastcgi_params /etc/nginx/fastcgi_params
 
-# Main config (includes conf.d)
 install -d -m0755 /www
+chown -R www-data:www-data /www
 [[ -f /www/index.html ]] || printf "<!doctype html><title>OK</title><h1>OK</h1>\n" > /www/index.html
 install -d -m0755 /www/errors
 printf "<!doctype html><title>Not Found</title><h1>404 Not Found</h1>\n" > /www/errors/404.html
 printf "<!doctype html><title>Error</title><h1>Service Error</h1>\n"       > /www/errors/50x.html
+chown -R www-data:www-data /www/errors
 
+# Main nginx.conf (http{} includes conf.d; default server uses www-data)
 if [[ ! -f /etc/nginx/nginx.conf ]]; then
   echo ">>> Writing /etc/nginx/nginx.conf ..."
   cat > /etc/nginx/nginx.conf <<"EOF"
-user  nginx;
+user  www-data;
 worker_processes  auto;
 
-# dynamic modules will be loaded below by sed if headers-more is built
 # load_module /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so;
 
 error_log  /var/log/nginx/error.log notice;
@@ -100,21 +143,15 @@ http {
                       '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
     access_log  /var/log/nginx/access.log main;
 
-    sendfile on;
-    tcp_nopush on;
-    keepalive_timeout 65;
-    gzip on;
+    sendfile on; tcp_nopush on; keepalive_timeout 65; gzip on;
 
-    # Load extra vhosts
     include /etc/nginx/conf.d/*.conf;
 
-    # Default site (server context可放location与error_page) :contentReference[oaicite:2]{index=2}
     server {
         listen 80 default_server;
         server_name _;
         root /www;
 
-        # error pages + their location{} 必须放在 server{} (location 不能在 http{}) :contentReference[oaicite:3]{index=3}
         error_page 404 /errors/404.html;
         error_page 500 502 503 504 /errors/50x.html;
         location = /errors/404.html { internal; }
@@ -125,19 +162,19 @@ http {
 }
 EOF
 else
+  # Ensure conf.d include exists
   if ! grep -q 'include /etc/nginx/conf\.d/\*\.conf;' /etc/nginx/nginx.conf; then
-    awk '
-      BEGIN{added=0}
-      /^http[[:space:]]*\{/ && !added { print; print "    include /etc/nginx/conf.d/*.conf;"; added=1; next }
-      { print }
-    ' /etc/nginx/nginx.conf > /etc/nginx/nginx.conf.tmp && mv /etc/nginx/nginx.conf.tmp /etc/nginx/nginx.conf
+    awk 'BEGIN{a=0} /^http[[:space:]]*\{/ && !a {print;print "    include /etc/nginx/conf.d/*.conf;";a=1;next} {print}' \
+      /etc/nginx/nginx.conf > /etc/nginx/nginx.conf.tmp && mv /etc/nginx/nginx.conf.tmp /etc/nginx/nginx.conf
   fi
+  # Ensure 'user www-data;' at top
+  sed -ri '0,/^\s*user\s+/s//user  www-data;/' /etc/nginx/nginx.conf || true
 fi
 
-# ====== conf.d: PHP-FPM example ========
-[[ -f /www/index.php ]] || printf "<?php phpinfo();\n" > /www/index.php
-cat > /etc/nginx/conf.d/php-fpm-example.conf <<"EOF"
-# /etc/nginx/conf.d/php-fpm-example.conf
+# --- DISABLED examples (won't load because *.conf.example) --------------------
+# FastCGI example according to official docs (SCRIPT_FILENAME etc.). :contentReference[oaicite:4]{index=4}
+cat > /etc/nginx/conf.d/php-fpm.conf.example <<"EOF"
+# /etc/nginx/conf.d/php-fpm.conf.example (disabled by default)
 server {
     listen       80;
     server_name  _;
@@ -153,21 +190,20 @@ server {
         try_files $uri $uri/ /index.php?$args;
     }
 
-    # FastCGI to php-fpm；SCRIPT_FILENAME 来自官方写法。:contentReference[oaicite:4]{index=4}
     location ~ \.php$ {
         try_files $uri =404;
         include /etc/nginx/fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_pass unix:/run/php/php-fpm.sock;   # 或 127.0.0.1:9000
+        fastcgi_pass unix:/run/php/php-fpm.sock;   # or 127.0.0.1:9000
     }
 
     location ~ /\.ht { deny all; }
 }
 EOF
 
-# ====== conf.d: proxy_pass example ===============================
-cat > /etc/nginx/conf.d/proxy-pass-example.conf <<"EOF"
-# /etc/nginx/conf.d/proxy-pass-example.conf
+# Proxy + WebSocket example per official guidance. :contentReference[oaicite:5]{index=5}
+cat > /etc/nginx/conf.d/proxy-pass.conf.example <<"EOF"
+# /etc/nginx/conf.d/proxy-pass.conf.example (disabled by default)
 server {
     listen       80;
     server_name  _;
@@ -178,6 +214,7 @@ server {
     location = /errors/404.html { internal; }
     location = /errors/50x.html { internal; }
 
+    # Reverse proxy
     location /app/ {
         proxy_pass http://127.0.0.1:3000/;
         proxy_http_version 1.1;
@@ -188,6 +225,7 @@ server {
         proxy_set_header Connection        "";
     }
 
+    # WebSocket upgrade
     location /ws {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -198,7 +236,8 @@ server {
 }
 EOF
 
-# ====== build headers-more dynamic module & stealth config ====================
+# --- Build headers-more module & stealth include (http-scope only) -----------
+# Headers-More lets us clear/set 'Server' (server_tokens off hides only version). :contentReference[oaicite:6]{index=6}
 echo ">>> Building headers-more dynamic module..."
 cd "${TMPDIR}"
 git clone --depth=1 https://github.com/openresty/headers-more-nginx-module.git
@@ -207,15 +246,16 @@ cd "nginx-${NGINX_VERSION}"
 make modules
 install -m644 objs/ngx_http_headers_more_filter_module.so /usr/lib/nginx/modules/
 
+# Load module at top of nginx.conf once
 if ! grep -q 'ngx_http_headers_more_filter_module\.so' /etc/nginx/nginx.conf; then
   sed -i '1iload_module /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so;' /etc/nginx/nginx.conf
 fi
 
+# http-scope stealth & security (split_clients is http-only). :contentReference[oaicite:7]{index=7}
 cat > /etc/nginx/conf.d/00-stealth-security.conf <<"EOF"
-# Hide version; brand will be overridden below.
 server_tokens off;
 
-# Pseudo-random fake brands per request (http scope) :contentReference[oaicite:7]{index=7}
+# Pseudo-random fake brands per request (http scope)
 split_clients "${msec}${remote_addr}${request_length}${uri}" $fake_server {
     20% "Apache";
     20% "cloudflare";
@@ -224,41 +264,24 @@ split_clients "${msec}${remote_addr}${request_length}${uri}" $fake_server {
     *   "ATS";
 }
 
-# Remove & overwrite Server header (headers-more; allowed in http) :contentReference[oaicite:8]{index=8}
+# Clear & overwrite Server header (headers-more)
 more_clear_headers Server;
 more_set_headers   "Server: $fake_server";
 
-# Remove common leaks & upstream banners
+# Remove common leaks and upstream banners
 more_clear_headers X-Powered-By;
 proxy_hide_header  Server;
 fastcgi_hide_header X-Powered-By;
 fastcgi_hide_header Server;
 
-# Conservative security headers (extend with HSTS/CSP when HTTPS is enabled)
+# Conservative security headers (extend with HSTS/CSP once HTTPS is enabled)
 add_header X-Content-Type-Options nosniff always;
 add_header X-Frame-Options DENY always;
 add_header Referrer-Policy no-referrer-when-downgrade always;
 add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
 EOF
 
-# Disable PHP "X-Powered-By" for ALL installed php-fpm versions (generic)
-# Works for Debian/Ubuntu PHP packages that use /etc/php/<ver>/fpm/conf.d
-shopt -s nullglob
-for fpm_dir in /etc/php/*/fpm; do
-  ver="${fpm_dir#/etc/php/}"; ver="${ver%/fpm}"        # e.g. "8.4"
-  ini_d="${fpm_dir}/conf.d"
-  install -d -m0755 "${ini_d}"
-  cat > "${ini_d}/zz-hardening.ini" <<'INI'
-; hardening: hide PHP signature in HTTP responses
-expose_php = Off
-INI
-  # Reload that specific FPM service if present
-  systemctl reload "php${ver}-fpm" 2>/dev/null || \
-  systemctl try-reload-or-restart "php${ver}-fpm" 2>/dev/null || true
-done
-shopt -u nullglob
-
-# ====== systemd unit ==========================================================
+# --- systemd unit -------------------------------------------------------------
 cat > /etc/systemd/system/nginx.service <<"EOF"
 [Unit]
 Description=NGINX web server (from source, stealth)
@@ -282,9 +305,15 @@ systemctl daemon-reload
 systemctl enable --now nginx
 
 echo ">>> Installed NGINX:"
+which nginx
 nginx -v
 echo ">>> Build args:"
 nginx -V 2>&1 | tr ';' '\n' | sed 's/^ \+//'
 
-# cleanup
 rm -rf "${TMPDIR}"
+
+echo
+echo "Examples are disabled by default:"
+echo "  - /etc/nginx/conf.d/php-fpm.conf.example"
+echo "  - /etc/nginx/conf.d/proxy-pass.conf.example"
+echo "Enable one by copying/renaming to *.conf, then: nginx -t && systemctl reload nginx"
