@@ -3,7 +3,8 @@
 # install-php.sh
 #
 # Purpose : Install PHP (version via $PHP_VER) + FPM + common extensions on Ubuntu,
-#           then enable & start php-fpm, and expose a stable /run/php/php-fpm.sock symlink.
+#           then enable & start php-fpm, expose a stable /run/php/php-fpm.sock symlink,
+#           and install Composer globally bound to the selected PHP version.
 # OS      : Ubuntu 22.04 (Jammy)
 # User    : root
 # Usage   : sudo -i ; bash install-php.sh
@@ -23,8 +24,7 @@ apt-get update -y
 apt-get install -y --no-install-recommends software-properties-common ca-certificates curl
 
 echo ">>> Adding PPA: ondrej/php ..."
-# Co-installable PHP versions & extensions for Ubuntu LTS are provided here.
-add-apt-repository -y ppa:ondrej/php    # :contentReference[oaicite:3]{index=3}
+add-apt-repository -y ppa:ondrej/php
 apt-get update -y
 
 echo ">>> Building package list for PHP ${PHP_VER} ..."
@@ -49,7 +49,7 @@ exts=(
   "php${PHP_VER}-readline"
 )
 
-# Optional PECL-packaged exts that *may* be present in PPA (install only if available)
+# Optional PECL-packaged extensions that may be present in the PPA (install only if available)
 optional_exts=(
   "php${PHP_VER}-imagick"
   "php${PHP_VER}-redis"
@@ -77,8 +77,7 @@ install_list=("${avail_core[@]}" "${avail_exts[@]}" "${avail_opt[@]}")
 echo ">>> Installing PHP ${PHP_VER} & extensions ..."
 apt-get install -y "${install_list[@]}"
 
-# Enable extensions (idempotent). Not strictly required if package auto-enables,
-# but safe to ensure they're active for this PHP version.
+# Enable extensions (idempotent)
 enable_mods=()
 for pkg in "${avail_exts[@]}" "${avail_opt[@]}"; do
   mod="${pkg##*-}"              # php<ver>-<mod> -> <mod>
@@ -87,14 +86,14 @@ for pkg in "${avail_exts[@]}" "${avail_opt[@]}"; do
 done
 if ((${#enable_mods[@]})); then
   echo ">>> Enabling modules with phpenmod for PHP ${PHP_VER} ..."
-  phpenmod -v "${PHP_VER}" "${enable_mods[@]}" || true   # :contentReference[oaicite:4]{index=4}
+  phpenmod -v "${PHP_VER}" "${enable_mods[@]}" || true
 fi
 
 echo ">>> Enabling and starting php${PHP_VER}-fpm ..."
 systemctl enable --now "php${PHP_VER}-fpm"
 
 # Derive FPM socket (from default pool www.conf), then publish a stable symlink:
-POOL_CONF="/etc/php/${PHP_VER}/fpm/pool.d/www.conf"   # standard path on Ubuntu/Debian :contentReference[oaicite:5]{index=5}
+POOL_CONF="/etc/php/${PHP_VER}/fpm/pool.d/www.conf"   # standard path on Ubuntu/Debian
 if [[ ! -r "${POOL_CONF}" ]]; then
   echo "ERROR: Pool config not found: ${POOL_CONF}" >&2
   exit 1
@@ -109,6 +108,49 @@ else
   link_target="(tcp:${SOCKET:-unknown})"
 fi
 
+# ---------- Composer (global) -------------------------------------------------
+echo ">>> Ensuring 'php' resolves to PHP ${PHP_VER} for Composer ..."
+# Prefer update-alternatives if available; otherwise create a safe shim.
+if command -v update-alternatives >/dev/null 2>&1 && [[ -x "/usr/bin/php${PHP_VER}" ]]; then
+  # Register current PHP if not registered yet.
+  if ! update-alternatives --query php >/dev/null 2>&1; then
+    update-alternatives --install /usr/bin/php php "/usr/bin/php${PHP_VER}" 1
+  fi
+  # Point 'php' to the requested version.
+  update-alternatives --set php "/usr/bin/php${PHP_VER}" || true
+fi
+# Fallback shim if /usr/bin/php is still missing or not pointing to the target version:
+if ! command -v php >/dev/null 2>&1; then
+  ln -s "/usr/bin/php${PHP_VER}" /usr/local/bin/php
+fi
+
+echo ">>> Installing Composer ..."
+# Composer needs unzip and git for extracting archives and fetching repositories
+apt-get install -y --no-install-recommends unzip git
+
+# Download and verify installer (official recommendation: verify sha384)
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+curl -fsSL https://composer.github.io/installer.sig -o "${TMP_DIR}/installer.sig"
+curl -fsSL https://getcomposer.org/installer -o "${TMP_DIR}/composer-setup.php"
+
+EXPECTED_SIG="$(cat "${TMP_DIR}/installer.sig")"
+ACTUAL_SIG="$(php -r "echo hash_file('sha384', '${TMP_DIR}/composer-setup.php');")"
+
+if [[ "${EXPECTED_SIG}" != "${ACTUAL_SIG}" ]]; then
+  echo "ERROR: Invalid Composer installer signature." >&2
+  exit 1
+fi
+
+php "${TMP_DIR}/composer-setup.php" --install-dir=/usr/local/bin --filename=composer --quiet
+rm -f "${TMP_DIR}/composer-setup.php" || true
+
+# Set a sane memory limit for Composer-heavy installs (optional)
+if [[ -d "/etc/php/${PHP_VER}/cli/conf.d" ]]; then
+  echo "memory_limit = -1" > "/etc/php/${PHP_VER}/cli/conf.d/99-composer-memory.ini"
+fi
+
+# ---------- Final output ------------------------------------------------------
 echo
 echo "PHP-FPM version:"
 "php-fpm${PHP_VER}" -v || php-fpm -v || true
@@ -117,4 +159,7 @@ echo "Pool config : ${POOL_CONF}"
 echo "FPM listen  : ${SOCKET:-<unknown>}"
 echo "Symlink     : /run/php/php-fpm.sock -> ${link_target}"
 echo
+echo "Composer    : $(/usr/local/bin/composer --version 2>/dev/null || echo 'not found')"
+echo
 echo "✅ Done. NGINX can use: fastcgi_pass unix:/run/php/php-fpm.sock;"
+echo "✅ Composer installed at: /usr/local/bin/composer"
