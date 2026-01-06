@@ -5,7 +5,7 @@
 # Purpose : Install PHP (version via $PHP_VER) + FPM + common extensions on Ubuntu,
 #           then enable & start php-fpm, expose a stable /run/php/php-fpm.sock symlink,
 #           and install Composer globally bound to the selected PHP version.
-# OS      : Ubuntu 22.04 (Jammy)
+# OS      : Ubuntu 22.04 (Jammy) / 24.04 (Noble)
 # User    : root
 # Usage   : sudo -i ; bash install-php.sh
 # Notes   : Packages come from ppa:ondrej/php (versioned as php<ver>-<ext>).
@@ -13,11 +13,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+require_supported_ubuntu
+ensure_apt_ready
+
 [[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
 # ------ Version knob ----------------------------------------------------------
-PHP_VER="${PHP_VER:-8.4}"   # change here if you want (e.g., 8.3/8.2)
+PHP_VER="${PHP_VER:-8.4}"
 
 echo ">>> Installing prerequisites ..."
 apt-get update -y
@@ -26,6 +31,21 @@ apt-get install -y --no-install-recommends software-properties-common ca-certifi
 echo ">>> Adding PPA: ondrej/php ..."
 add-apt-repository -y ppa:ondrej/php
 apt-get update -y
+choose_php_ver() {
+  local candidates=("8.4" "8.3" "8.2")
+  for v in "${candidates[@]}"; do
+    if apt-cache policy "php${v}-fpm" 2>/dev/null | awk -F': ' '/Candidate:/ {print $2}' | grep -qv '(none)'; then
+      echo "${v}"
+      return 0
+    fi
+  done
+  echo ""
+  return 1
+}
+if ! apt-cache policy "php${PHP_VER}-fpm" 2>/dev/null | awk -F': ' '/Candidate:/ {print $2}' | grep -qv '(none)'; then
+  sel="$(choose_php_ver)" || true
+  [[ -n "${sel}" ]] && PHP_VER="${sel}"
+fi
 
 echo ">>> Building package list for PHP ${PHP_VER} ..."
 core_pkgs=(
@@ -75,7 +95,11 @@ mapfile -t avail_opt  < <(filter_available "${optional_exts[@]}")
 install_list=("${avail_core[@]}" "${avail_exts[@]}" "${avail_opt[@]}")
 
 echo ">>> Installing PHP ${PHP_VER} & extensions ..."
-apt-get install -y "${install_list[@]}"
+if ((${#install_list[@]})); then
+  apt-get install -y "${install_list[@]}"
+else
+  echo "ERROR: No available PHP packages for ${PHP_VER}"; exit 1
+fi
 
 # Enable extensions (idempotent)
 enable_mods=()

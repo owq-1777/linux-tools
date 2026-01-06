@@ -6,12 +6,17 @@
 # install headers-more dynamic module, hide/replace Server header, use www-data,
 # ship disabled example vhosts (*.conf.example), custom error pages.
 #
-# OS       : Ubuntu 22.04 (Jammy) - 64-bit
+# OS       : Ubuntu 22.04 (Jammy) / 24.04 (Noble) - 64-bit
 # User     : Run as root.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 trap 'echo "[ERROR] line $LINENO: command exited with status $?" >&2' ERR
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+require_supported_ubuntu
+ensure_apt_ready
 
 [[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 
@@ -22,9 +27,21 @@ TARBALL_URL="https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
 
 echo ">>> Install build deps..."
 apt-get update -y
-apt-get install -y \
-  build-essential git curl ca-certificates wget perl tar xz-utils unzip \
+filter_available() {
+  local out=()
+  for pkg in "$@"; do
+    if apt-cache policy "$pkg" 2>/dev/null | awk -F': ' '/Candidate:/ {print $2}' | grep -qv '(none)'; then
+      out+=("$pkg")
+    fi
+  done
+  printf '%s\n' "${out[@]}"
+}
+deps=(
+  build-essential git curl ca-certificates wget perl tar xz-utils unzip
   libssl-dev zlib1g-dev libpcre3-dev libpcre2-dev
+)
+mapfile -t avail_deps < <(filter_available "${deps[@]}")
+apt-get install -y "${avail_deps[@]}"
 
 echo ">>> Prepare dirs & user..."
 id -u www-data >/dev/null 2>&1 || adduser --system --no-create-home --group --shell /usr/sbin/nologin www-data

@@ -80,19 +80,21 @@ for file in "${HOME}/.profile" "${HOME}/.zshrc"; do
   # append fresh managed block
   cat >> "${file}.tmp" <<'EOF'
 # BEGIN dev-tools PATH
-# 1) per-user bin
+# per-user bin
 [ -d "$HOME/.local/bin" ] && case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
-# 2) uv session env (adds shims; safe if missing)
-[ -s "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
-# 3) Rust (cargo)
-[ -s "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-# 4) nvm (Node Version Manager)
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-# 5) Go (system-wide) if present
+# Go (system-wide) if present
 [ -d "/usr/local/go/bin" ] && case ":$PATH:" in *":/usr/local/go/bin:"*) ;; *) export PATH="/usr/local/go/bin:$PATH" ;; esac
 # END dev-tools PATH
 EOF
+
+  # zsh-only: enable uv completion if available
+  if [[ "${file}" == "${HOME}/.zshrc" ]]; then
+    cat >> "${file}" <<'EOF'
+# BEGIN uv completion (zsh)
+command -v uv >/dev/null 2>&1 && eval "$(uv generate-shell-completion zsh)"
+# END uv completion (zsh)
+EOF
+  fi
 
   mv "${file}.tmp" "${file}"
 done

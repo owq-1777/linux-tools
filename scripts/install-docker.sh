@@ -18,6 +18,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+require_supported_ubuntu
+ensure_apt_ready
+
 [[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
@@ -39,6 +44,8 @@ chmod a+r /etc/apt/keyrings/docker.asc
 
 UBUNTU_CODE_NAME="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
 ARCH="$(dpkg --print-architecture)"
+
+[[ -n "${UBUNTU_CODE_NAME:-}" ]] || { echo "Failed to detect Ubuntu codename"; exit 1; }
 
 cat > /etc/apt/sources.list.d/docker.list <<EOF
 deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODE_NAME} stable

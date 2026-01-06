@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# setup-build-toolchain.sh
+# setup-system-build-toolchain.sh
 #
 # Purpose  : Install a comprehensive build toolchain for common C/C++/Rust/Node/Python builds.
-# OS       : Ubuntu 22.04 (Jammy) - 64-bit
+# OS       : Ubuntu 22.04 (Jammy) / 24.04 (Noble) - 64-bit
 # User     : Must be run as root.
 # Features :
 #   - Compilers & linkers: gcc/g++/gfortran, clang/llvm, lld, (mold if available)
@@ -15,12 +15,17 @@
 #   - Idempotent: safe to re-run; prints versions for verification
 # Usage    :
 #   sudo -i
-#   bash setup-build-toolchain.sh
+#   bash setup-system-build-toolchain.sh
 # Notes    :
 #   - Some extras (e.g., mold) may not be in all mirrors; install attempts are best-effort.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+require_supported_ubuntu
+ensure_apt_ready
 
 [[ "$(id -u)" -eq 0 ]] || { echo "Please run as root."; exit 1; }
 
@@ -34,22 +39,34 @@ add-apt-repository -y universe || true
 apt-get update -y
 
 echo ">>> Installing core compilers, linkers, and build tools..."
-apt-get install -y --no-install-recommends \
-  build-essential pkg-config \
-  gcc g++ gfortran \
-  clang llvm lld lldb \
-  cmake ninja-build make \
-  autoconf automake libtool m4 \
-  nasm yasm ccache \
-  binutils patchelf \
-  git git-lfs \
-  curl wget ca-certificates \
-  unzip xz-utils tar zip \
-  python3 python3-dev python3-venv python3-pip \
-  libssl-dev zlib1g-dev libbz2-dev liblzma-dev \
-  libreadline-dev libsqlite3-dev libffi-dev \
-  libncurses5-dev libncursesw5-dev tk-dev \
+filter_available() {
+  local out=()
+  for pkg in "$@"; do
+    if apt-cache policy "$pkg" 2>/dev/null | awk -F': ' '/Candidate:/ {print $2}' | grep -qv '(none)'; then
+      out+=("$pkg")
+    fi
+  done
+  printf '%s\n' "${out[@]}"
+}
+pkgs=(
+  build-essential pkg-config
+  gcc g++ gfortran
+  clang llvm lld lldb
+  cmake ninja-build make
+  autoconf automake libtool m4
+  nasm yasm ccache
+  binutils patchelf
+  git git-lfs
+  curl wget ca-certificates
+  unzip xz-utils tar zip
+  python3 python3-dev python3-venv python3-pip
+  libssl-dev zlib1g-dev libbz2-dev liblzma-dev
+  libreadline-dev libsqlite3-dev libffi-dev
+  libncurses5-dev libncursesw5-dev tk-dev
   libxml2-dev libxslt1-dev libcurl4-openssl-dev
+)
+mapfile -t avail_pkgs < <(filter_available "${pkgs[@]}")
+apt-get install -y --no-install-recommends "${avail_pkgs[@]}"
 
 # Optional extras (best-effort; don’t fail the script if unavailable)
 apt-get install -y --no-install-recommends mold || true

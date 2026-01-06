@@ -73,6 +73,8 @@ zstyle ':omz:update' mode disabled
 plugins=(
   git
   zsh-autosuggestions
+  uv
+  nvm
   zsh-syntax-highlighting
 )
 
@@ -81,6 +83,9 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 
 # Load Oh My Zsh
 source "$ZSH/oh-my-zsh.sh"
+
+# uv completion for zsh (if uv is installed)
+command -v uv >/dev/null 2>&1 && eval "$(uv generate-shell-completion zsh)"
 
 # --- Shortcuts / aliases ---
 # Esc Esc -> prepend sudo to current command line
