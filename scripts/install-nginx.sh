@@ -71,6 +71,7 @@ echo ">>> Configure core..."
   --with-http_v2_module \
   --with-http_gzip_static_module \
   --with-http_stub_status_module \
+  --with-http_realip_module \
   --with-stream \
   --with-stream_ssl_module \
   --with-cc-opt='-O2 -fstack-protector-strong -fPIC' \
