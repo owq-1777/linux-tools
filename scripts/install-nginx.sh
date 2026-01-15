@@ -45,7 +45,15 @@ apt-get install -y "${avail_deps[@]}"
 
 echo ">>> Prepare dirs & user..."
 id -u www-data >/dev/null 2>&1 || adduser --system --no-create-home --group --shell /usr/sbin/nologin www-data
-install -d -m0755 /etc/nginx /etc/nginx/conf.d /etc/nginx/snippets /var/log/nginx /var/cache/nginx /usr/lib/nginx/modules
+EXIST_NGINX=0
+if command -v nginx >/dev/null 2>&1 || [[ -x /usr/sbin/nginx ]]; then
+  EXIST_NGINX=1
+fi
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  install -d -m0755 /etc/nginx /etc/nginx/conf.d /etc/nginx/snippets /var/log/nginx /var/cache/nginx /usr/lib/nginx/modules
+else
+  install -d -m0755 /usr/lib/nginx/modules
+fi
 
 echo ">>> Download & unpack NGINX ${NGINX_VERSION}..."
 TMPDIR="$(mktemp -d)"
@@ -81,13 +89,15 @@ echo ">>> Build & install core..."
 make -j"$(nproc)"
 make install
 
-# Base includes (always install fresh)
-install -m0644 ./conf/mime.types     /etc/nginx/mime.types
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+install -m0644 ./conf/mime.types /etc/nginx/mime.types
 install -m0644 ./conf/fastcgi_params /etc/nginx/fastcgi_params
+fi
 
-# Remove branded default html (avoid fallback Welcome to nginx!)
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
 rm -f /usr/local/nginx/html/index.html /usr/local/nginx/html/50x.html 2>/dev/null || true
 rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html 2>/dev/null || true
+fi
 
 echo ">>> Build headers-more dynamic module..."
 cd "${TMPDIR}"
@@ -104,15 +114,18 @@ install -d -m0755 /usr/lib/nginx/modules
 install -m0644 "$MOD_SO" /usr/lib/nginx/modules/
 
 echo ">>> Prepare site root & custom error pages..."
-install -d -m0755 /www /www/errors
-[[ -f /www/index.html ]] || printf "<!doctype html><meta charset=utf-8><title>OK</title><h1>OK</h1>\n" > /www/index.html
-printf "<!doctype html><meta charset=utf-8><title>Not Found</title><h1>404 Not Found</h1>\n" > /www/errors/404.html
-printf "<!doctype html><meta charset=utf-8><title>Error</title><h1>Service Error</h1>\n"       > /www/errors/50x.html
-chown -R www-data:www-data /www
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  install -d -m0755 /www /www/errors
+  [[ -f /www/index.html ]] || printf "<!doctype html><meta charset=utf-8><title>OK</title><h1>OK</h1>\n" > /www/index.html
+  printf "<!doctype html><meta charset=utf-8><title>Not Found</title><h1>404 Not Found</h1>\n" > /www/errors/404.html
+  printf "<!doctype html><meta charset=utf-8><title>Error</title><h1>Service Error</h1>\n" > /www/errors/50x.html
+  chown -R www-data:www-data /www
+fi
 
 echo ">>> Write /etc/nginx/nginx.conf ..."
-tmp_ng="$(mktemp)"
-cat > "${tmp_ng}" <<"EOF"
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  tmp_ng="$(mktemp)"
+  cat > "${tmp_ng}" <<"EOF"
 user  www-data;
 worker_processes  auto;
 
@@ -150,23 +163,27 @@ http {
     }
 }
 EOF
-install -m0644 "${tmp_ng}" /etc/nginx/nginx.conf
-rm -f "${tmp_ng}"
+  install -m0644 "${tmp_ng}" /etc/nginx/nginx.conf
+  rm -f "${tmp_ng}"
+fi
 
 echo ">>> Write error-pages snippet ..."
-install -d -m0755 /etc/nginx/snippets
-tmp_sn="$(mktemp)"
-cat > "${tmp_sn}" <<"EOF"
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  install -d -m0755 /etc/nginx/snippets
+  tmp_sn="$(mktemp)"
+  cat > "${tmp_sn}" <<"EOF"
 location = /errors/404.html { internal; }
 location = /errors/50x.html { internal; }
 EOF
-install -m0644 "${tmp_sn}" /etc/nginx/snippets/error-pages-locations.conf
-rm -f "${tmp_sn}"
+  install -m0644 "${tmp_sn}" /etc/nginx/snippets/error-pages-locations.conf
+  rm -f "${tmp_sn}"
+fi
 
 echo ">>> Write stealth & security to /etc/nginx/conf.d/00-stealth-security.conf ..."
-install -d -m0755 /etc/nginx/conf.d
-tmp_st="$(mktemp)"
-cat > "${tmp_st}" <<"EOF"
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  install -d -m0755 /etc/nginx/conf.d
+  tmp_st="$(mktemp)"
+  cat > "${tmp_st}" <<"EOF"
 server_tokens off;
 
 # http-scope split_clients to generate fake brand
@@ -194,13 +211,14 @@ add_header X-Frame-Options DENY always;
 add_header Referrer-Policy no-referrer-when-downgrade always;
 add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
 EOF
-install -m0644 "${tmp_st}" /etc/nginx/conf.d/00-stealth-security.conf
-rm -f "${tmp_st}"
+  install -m0644 "${tmp_st}" /etc/nginx/conf.d/00-stealth-security.conf
+  rm -f "${tmp_st}"
+fi
 
 echo ">>> Ship disabled example vhosts (*.conf.example) ..."
-# php-fpm example
-tmp_pf="$(mktemp)"
-cat > "${tmp_pf}" <<"EOF"
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  tmp_pf="$(mktemp)"
+  cat > "${tmp_pf}" <<"EOF"
 # /etc/nginx/conf.d/php-fpm.conf.example (disabled by default)
 server {
     listen 80;
@@ -225,12 +243,11 @@ server {
     location ~ /\.ht { deny all; }
 }
 EOF
-install -m0644 "${tmp_pf}" /etc/nginx/conf.d/php-fpm.conf.example
-rm -f "${tmp_pf}"
+  install -m0644 "${tmp_pf}" /etc/nginx/conf.d/php-fpm.conf.example
+  rm -f "${tmp_pf}"
 
-# proxy-pass example
-tmp_px="$(mktemp)"
-cat > "${tmp_px}" <<"EOF"
+  tmp_px="$(mktemp)"
+  cat > "${tmp_px}" <<"EOF"
 # /etc/nginx/conf.d/proxy-pass.conf.example (disabled by default)
 server {
     listen 80;
@@ -262,12 +279,14 @@ server {
     }
 }
 EOF
-install -m0644 "${tmp_px}" /etc/nginx/conf.d/proxy-pass.conf.example
-rm -f "${tmp_px}"
+  install -m0644 "${tmp_px}" /etc/nginx/conf.d/proxy-pass.conf.example
+  rm -f "${tmp_px}"
+fi
 
 echo ">>> Write systemd unit ..."
-tmp_sd="$(mktemp)"
-cat > "${tmp_sd}" <<"EOF"
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  tmp_sd="$(mktemp)"
+  cat > "${tmp_sd}" <<"EOF"
 [Unit]
 Description=NGINX web server (from source, stealth)
 After=network.target
@@ -284,13 +303,20 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-install -m0644 "${tmp_sd}" /etc/systemd/system/nginx.service
-rm -f "${tmp_sd}"
+  install -m0644 "${tmp_sd}" /etc/systemd/system/nginx.service
+  rm -f "${tmp_sd}"
+fi
 
 echo ">>> Test & enable..."
-systemctl daemon-reload
-/usr/sbin/nginx -t
-systemctl enable --now nginx
+if [[ "${EXIST_NGINX}" -eq 0 ]]; then
+  systemctl daemon-reload
+  /usr/sbin/nginx -t
+  systemctl enable --now nginx
+else
+  systemctl daemon-reload || true
+  /usr/sbin/nginx -t
+  systemctl reload nginx || systemctl restart nginx || true
+fi
 
 echo ">>> Done."
 echo "Examples are disabled by default:"
